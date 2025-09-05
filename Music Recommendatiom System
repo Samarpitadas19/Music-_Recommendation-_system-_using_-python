@@ -1,0 +1,292 @@
+import streamlit as st  
+import pickle 
+ import pandas as pd 
+ import requests 
+ import time 
+ from streamlit_searchbox import st_searchbox  
+ from concurrent.futures import ThreadPoolExecutor,as_completed  
+from functools import lru_cache  
+ 
+ st.set_page_config(    
+  page_title="MelodyMatch - Music Recommendation System",     
+page_icon="🎵",    
+  layout="wide",     
+ initial_sidebar_state="collapsed"  
+)  
+ hide_streamlit_style = """  
+    <style>  
+        #MainMenu {visibility: hidden;}         
+footer {visibility: hidden;}         header 
+{visibility: hidden;}  
+  
+        .block-container {             
+padding-top: 1rem;             padding
+bottom: 1rem;  
+        }  
+  
+        .stButton button {             
+padding: 0.25rem 1rem;  
+        }  
+  
+        .song-card {             margin-bottom: 15px;             
+border-radius: 8px;             overflow: hidden;             
+transition: transform 0.2s ease;             box
+shadow: 0 2px 4px rgba(0,0,0,0.1);  
+        }   
+.song-card:hover { 
+         transform: scale(1.02);  
+        }  
+  
+        .song-card img {             
+height: 150px;             object
+fit: cover;  
+        }  
+  
+        .play-button {             
+width: 40px;             height: 
+40px;  
+        }  
+  
+        .play-icon {             
+font-size: 16px;  
+        }  
+  
+        .compact-text {             
+font-size: 0.9rem;             margin
+bottom: 0.2rem;  
+        }  
+  
+        .compact-title {             
+font-size: 1rem;             margin
+bottom: 0.3rem;  
+        }  
+    </style> """ st.markdown(hide_streamlit_style, 
+unsafe_allow_html=True)  
+  
+@st.cache_data def 
+load_data():  
+    try:  
+        music_dict =  
+pickle.load(open(r'C:\Users\USER\PycharmProjects\PythonProject1\.venv\m 
+usic.pkl', 'rb+'))  
+        music_df = pd.DataFrame(music_dict)         
+similarity_matrix = pickle.load(  
+            
+open(r'C:\Users\USER\PycharmProjects\PythonProject1\.venv\similarities. 
+pkl', 'rb+'))  
+return music_df, similarity_matrix  
+ except Exception as e:  
+      st.error(f"Error loading data: {e}")                                   
+return pd.DataFrame(), []  
+  
+@lru_cache(maxsize=1000) def 
+fetch_song_details_cached(music_title):     
+return fetch_song_details(music_title)  
+  def fetch_song_details(music_title):     
+ 
+ 
+ try:  
+        response = 
+requests.get(f"https://saavn.dev/api/search/songs?query={music_title}", 
+timeout=3)         data = response.json()  
+ 
+ 
+         if not data.get("data") or not data["data"].get("results"):  
+            return {  
+                'image':  
+"https://via.placeholder.com/300/6b48ff/FFFFFF?text=No+Image",  
+                'artist': "Unknown Artist",  
+                'preview_url': ""  
+            }  
+ 
+         song = data['data']['results'][0]  
+ 
+         artist = song.get("primaryArtists", "Unknown Artist")         
+if isinstance(artist, list):        
+      artist = ", ".join(artist)  
+ 
+         image_url = song.get("image", [{}])[-1].get("url",   
+ 
+                                                    
+"https://via.placeholder.com/300/6b48ff/FFFFFF?text=No+Image")         
+preview_url = ""       
+   if song.get("downloadUrl"):  
+            preview_url = song["downloadUrl"][0].get("url", "")  
+ 
+ 
+  
+        return {  
+            'image': image_url,  
+            'artist': artist or "Unknown Artist",             
+'preview_url': preview_url  
+} 
+     
+ except Exception as e:  
+        return {  
+            'image':  
+"https://via.placeholder.com/300/6b48ff/FFFFFF?text=No+Image",  
+            'artist': "Unknown Artist",  
+            'preview_url': ""  
+        }  
+ 
+ 
+  def fetch_multiple_song_details(titles):  
+    """Fetch details for multiple songs in parallel"""     
+results = []      
+with ThreadPoolExecutor(max_workers=5) as executor:  
+        future_to_title = {executor.submit(fetch_song_details_cached, 
+title): title for title in titles}      
+    for future in as_completed(future_to_title):             
+ try:  
+      results.append(future.result())              
+except Exception as e:             
+     results.append({  
+                    'image':  
+"https://via.placeholder.com/300/6b48ff/FFFFFF?text=No+Image",  
+                    'artist': "Unknown Artist",  
+                    'preview_url': ""  
+                })     
+ return results  
+ 
+ 
+ 
+  def recommend(musics):     
+try:  
+        music_index = music[music['title'] == musics].index[0]         
+distances = similarity[music_index]         music_list = 
+sorted(list(enumerate(distances)), reverse=True, 
+ key=lambda x: x[1])[1:21]  
+  
+ 
+        recommended_titles = [music.iloc[i[0]].title for i in music_list]  
+  
+        details_list =  
+fetch_multiple_song_details(tuple(recommended_titles))  
+         recommended_music = []      
+    for i, title in enumerate(recommended_titles):  
+            recommended_music.append({  
+                'title': title,  
+                'image': details_list[i]['image'],  
+                'artist': details_list[i]['artist'],  
+                'preview_url': details_list[i]['preview_url']  
+            })        
+  return recommended_music    
+  except Exception as e:  
+        st.error(f"Error in recommendation: {e}")         
+return []  
+ 
+ def search_songs(search_term):  
+    """Autocomplete search from local dataset"""     if 
+not search_term:  
+        return []    
+  try:  
+        filtered_titles = 
+music[music['title'].str.contains(search_term, 
+case=False)]['title'].tolist()      
+    return filtered_titles[:10]    
+  except:  
+        return []  
+ 
+ music, similarity = load_data()  
+ 
+ if 'recommendations' not in st.session_state:     
+st.session_state.recommendations = [] 
+ if 'playing' not in st.session_state:     
+st.session_state.playing = None 
+ if 'current_audio' not in st.session_state:     
+st.session_state.current_audio = None  
+ 
+ st.markdown('<h1 style="text-align:center; font-size:2.2rem; 
+marginbottom: 1rem; color:#6b48ff">🎵 MelodyMatch</h1>',             
+unsafe_allow_html=True)  
+ 
+ col1, col2 = st.columns([4, 1]) 
+with col1:  
+    selected_song = st_searchbox(  
+ 
+         
+search_songs, 
+    placeholder="Search for a song...", 
+    label="Find your favorite music",  
+    key="music_searchbox"  
+    )  
+with col2:  
+    st.write("<div style='margin-top: 1.8rem;'></div>", 
+unsafe_allow_html=True)   
+   if st.button("Recommend", type="primary", 
+use_container_width=True):  
+        if selected_song:   
+           with st.spinner("Finding recommendations..."):  
+                st.session_state.recommendations = 
+recommend(selected_song)       
+   else:  
+            st.warning("Please select a song first!")  
+ 
+ if st.session_state.recommendations:  
+    for row_start in range(0, len(st.session_state.recommendations),  
+5):   
+       cols = st.columns(5) 
+           for i, rec in 
+enumerate(st.session_state.recommendations[row_start:row_start + 5]): 
+           with cols[i]:  
+              play_button_key = 
+ f"play_{rec['title']}_{row_start}_{i}"  
+  
+                st.image(rec['image'], use_container_width=True)                        
+st.markdown(f"<div class='compact-  
+title'><b>{rec['title']}</b></div>", unsafe_allow_html=True)  
+                   st.markdown(f"<div class='compact- 
+text'>{rec['artist']}</div>", unsafe_allow_html=True) 
+  
+                if st.button("▶ Play", key=play_button_key, 
+use_container_width=True):  
+                    st.session_state.playing = rec  
+                    st.session_state.current_audio = rec['title']  
+                        st.rerun()  
+                 if st.session_state.playing and 
+st.session_state.playing['title']==rec['title']:                       
+                      ifrec['preview_url']:                     
+ 
+ 
+st.audio(rec['preview_url'],  
+format="audio/mp3") 
+                   
+   else:  
+     st.warning("No preview available")  
+ 
+ if st.session_state.playing:  
+    st.markdown("---")  
+    st.markdown(  
+ 
+        f"<h3 style='text-align:center; margin-bottom: 0.5rem;'>🎶 Now 
+Playing: {st.session_state.playing['title']}</h3>",         
+unsafe_allow_html=True)   
+   st.markdown(f"<p style='text-align:center; margin-bottom:  
+1rem;'>{st.session_state.playing['artist']}</p>",                      
+                 unsafe_allow_html=True)  
+ 
+ 
+     col1, col2, col3 = st.columns([1, 2, 1])     
+with col2:  
+        st.image(st.session_state.playing['image'], 
+use_container_width=True)   
+       if st.session_state.playing['preview_url']:  
+            st.audio(st.session_state.playing['preview_url'], 
+format="audio/mp3")    
+      else:  
+            st.warning("No preview available for this song")  
+ 
+     if st.button("Stop Playback", type="secondary", 
+use_container_width=True):  
+        st.session_state.playing = None  
+           st.session_state.current_audio = None     
+       st.rerun()  
+  
+st.markdown("---")  
+st.markdown("""  
+<div style='text-align: center; color: #666; margin-top: 30px; fontsize: 
+0.9rem;'>  
+    <p>Search for a song and click "Recommend" to get similar music 
+recommendations</p>  
+    <p>▶ Click the "Play" button below any song to listen to a preview</p>  
+</div> """, unsafe_allow_html=True) 
